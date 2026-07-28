@@ -1,0 +1,36 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # 1. Bloqueia acesso direto a arquivos sensíveis (.env, .git, .crt, .key, .json, .log)
+    RewriteRule ^(\.env|\.git|.*\.crt|.*\.key|.*\.json|.*\.log) - [F,L,NC]
+
+    # 2. Bloqueia acesso direto às pastas de código e armazenamento
+    RewriteRule ^(storage|config|src)(/|$) - [F,L,NC]
+
+    # 3. Configuração de CORS no Apache
+    <IfModule mod_headers.c>
+        Header set Access-Control-Allow-Origin "*"
+        Header set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+        Header set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, Accept"
+    </IfModule>
+
+    # Responde 200 OK diretamente para requisições de preflight OPTIONS
+    RewriteCond %{REQUEST_METHOD} OPTIONS
+    RewriteRule ^(.*)$ - [R=200,L]
+
+    # Redireciona todas as requisições válidas de rotas/API para public/index.php
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ public/index.php [L,QSA]
+</IfModule>
+
+# Bloqueio adicional por diretivas Apache caso o mod_rewrite falhe
+<FilesMatch "^\.|\.crt$|\.key$|\.json$|\.log$|\.env$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>

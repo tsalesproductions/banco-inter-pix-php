@@ -1,0 +1,36 @@
+# ==========================================
+# Configurações do Git Ignore (.gitignore)
+# ==========================================
+
+# 1. Arquivos de Ambiente e Credenciais (CRÍTICO DE SEGURANÇA)
+.env
+.env.local
+.env.*.local
+qrpix-store-old.js
+
+# 2. Certificados Digitais mTLS e Chaves Privadas
+storage/certs/*.crt
+storage/certs/*.key
+storage/certs/*.pem
+!storage/certs/.gitkeep
+
+# 3. Cache Local de Dados e Tokens OAuth
+storage/data/*.json
+!storage/data/.gitkeep
+
+# 4. Logs de Auditoria e Erros
+storage/logs/*.log
+storage/logs/*.txt
+!storage/logs/.gitkeep
+
+# 5. Dependências e IDEs
+/vendor/
+composer.lock
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 6. Arquivos de Sistema Operacional
+.DS_Store
+Thumbs.db
