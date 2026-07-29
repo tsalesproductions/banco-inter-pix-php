@@ -58,5 +58,12 @@ return [
         'data_path' => __DIR__ . '/../storage/data',
         'cache_file' => __DIR__ . '/../storage/data/pix_cache.json',
         'token_file' => __DIR__ . '/../storage/data/inter_token.json',
+    ],
+    'evolution' => [
+        'enabled'       => env('EVOLUTION_ENABLED', false),
+        'api_url'       => rtrim(env('EVOLUTION_API_URL', ''), '/'),
+        'api_key'       => env('EVOLUTION_API_KEY', ''),
+        'instance'      => env('EVOLUTION_INSTANCE', ''),
+        'template_file' => __DIR__ . '/whatsapp_pix_template.txt',
     ]
 ];

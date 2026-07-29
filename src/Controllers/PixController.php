@@ -5,21 +5,25 @@ namespace App\Controllers;
 use App\Services\InterPixService;
 use App\Services\LojaIntegradaService;
 use App\Services\PixCacheRepository;
+use App\Services\EvolutionService;
 
 class PixController
 {
     private InterPixService $interService;
     private LojaIntegradaService $liService;
     private PixCacheRepository $pixRepository;
+    private ?EvolutionService $evolutionService;
 
     public function __construct(
         InterPixService $interService,
         LojaIntegradaService $liService,
-        PixCacheRepository $pixRepository
+        PixCacheRepository $pixRepository,
+        ?EvolutionService $evolutionService = null
     ) {
         $this->interService = $interService;
         $this->liService = $liService;
         $this->pixRepository = $pixRepository;
+        $this->evolutionService = $evolutionService;
     }
 
     /**
@@ -91,13 +95,27 @@ class PixController
                 'cliente' => [
                     'nome' => $orderData['cliente']['nome'] ?? $orderData['endereco_entrega']['nome'] ?? '',
                     'email' => $orderData['cliente']['email'] ?? '',
-                    'cpf_cnpj' => $orderData['cliente']['cpf'] ?? $orderData['cliente']['cnpj'] ?? ''
+                    'cpf_cnpj' => $orderData['cliente']['cpf'] ?? $orderData['cliente']['cnpj'] ?? '',
+                    'celular' => $orderData['cliente']['celular'] ?? $orderData['cliente']['telefone'] ?? ''
                 ],
                 'inter_response'  => $interCobv,
                 'created_at'      => date('Y-m-d H:i:s')
             ];
 
-            // 6. Armazena no repositório local
+            // 6. Envia notificação por WhatsApp via Evolution API (se habilitado)
+            if ($this->evolutionService && $this->evolutionService->isEnabled()) {
+                try {
+                    $wppResult = $this->evolutionService->sendPixNotification($orderData, $pixCopyPaste, $qrCodeUrl);
+                    $pixRecord['whatsapp_status'] = $wppResult;
+                } catch (\Throwable $wppErr) {
+                    $pixRecord['whatsapp_status'] = [
+                        'success' => false,
+                        'message' => 'Erro ao enviar WhatsApp: ' . $wppErr->getMessage()
+                    ];
+                }
+            }
+
+            // 7. Armazena no repositório local
             $this->pixRepository->save($pixRecord);
 
             // 7. Retorna a resposta

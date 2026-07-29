@@ -2,7 +2,7 @@
 
 Solução backend em **PHP puro** (sem frameworks pesados) para geração inteligente de Cobranças Pix com Vencimento (**Pix Cobv 24h**) integrando a **API v2 do Banco Inter** com a **API v1 da Loja Integrada**.
 
-Contém mecanismo de **Cache Inteligente de 24h**, **mTLS OAuth 2.0**, **Listener e Gestor de Webhooks com Auditoria**, **Tratamento Automático de Pagamentos e Estornos**, e **Script JS de Injeção Visual no Checkout** (`qrpix-store.js`).
+Contém mecanismo de **Cache Inteligente de 24h**, **mTLS OAuth 2.0**, **Listener e Gestor de Webhooks com Auditoria**, **Tratamento Automático de Pagamentos e Estornos**, e **Script JS de Injeção Visual no Checkout** (`qrpix-store.js`) e módulo de notificação via **Evolution API (WhatsApp)**.
 
 ---
 
@@ -14,19 +14,21 @@ Contém mecanismo de **Cache Inteligente de 24h**, **mTLS OAuth 2.0**, **Listene
 
 2. **Integração Completa com a Loja Integrada**:
    - Busca o pedido via `GET https://api.awsli.com.br/v1/pedido/{numero}`.
-   - Extrai automaticamente o valor total, dados do cliente (nome, e-mail, CPF/CNPJ).
+   - Extrai automaticamente o valor total, dados do cliente (nome, e-mail, CPF/CNPJ, telefone).
    - **Pagamentos**: Atualiza a situação para `pedido_pago` quando o Webhook do Banco Inter notifica a liquidação.
    - **Estornos / Devoluções**: Identifica automáticas de devolução e altera a situação para `pedido_cancelado`.
 
-3. **Segurança Reforçada**:
+3. **Notificação via WhatsApp (Evolution API)**:
+   - Envia automaticamente no WhatsApp do cliente a foto do QR Code e a chave Pix Copia e Cola na legenda da imagem para cópia com 1 toque.
+   - Permite definir a mensagem inicial através de um template `.txt` customizável com variáveis (`{nome}`, `{numero_pedido}`, `{valor_total}`).
+
+4. **Segurança Reforçada**:
    - Autenticação bancária mTLS (Certificado `.crt` e chave privada `.key`).
+   - Proteção de privacidade: Arquivo de template de mensagens da loja (`config/*.txt`) e credenciais (`.env`) excluídos do Git.
    - Bloqueio multi-camadas via `.htaccess` e regras no roteador para proteger arquivos sensíveis (`.env`, `.key`, `.crt`, `storage/`, `config/`).
 
-4. **Auditoria e Logs em Tempo Real**:
+5. **Auditoria e Logs em Tempo Real**:
    - Grava 100% dos disparos de Webhook recebidos no arquivo `storage/logs/webhooks.log` com IP de origem, User-Agent, dados mTLS e payload JSON bruto.
-
-5. **Script de Injeção Visual no Checkout (`qrpix-store.js`)**:
-   - Script em JavaScript/jQuery para injetar o QR Code do Banco Inter no checkout da Loja Integrada com cópia em 1 clique e blindagem visual contra *flicker*.
 
 ---
 
@@ -39,29 +41,32 @@ Contém mecanismo de **Cache Inteligente de 24h**, **mTLS OAuth 2.0**, **Listene
 ```
 inter-pix-php/
 ├── config/
-│   └── app.php                  # Configurações e fusão de variáveis de ambiente
+│   ├── app.php                            # Configurações e fusão de variáveis de ambiente
+│   ├── whatsapp_pix_template.txt.example  # Exemplo público de template para mensagens do WhatsApp
+│   └── whatsapp_pix_template.txt          # Template privado de mensagens da sua loja (Ignorado no Git)
 ├── src/
 │   ├── Controllers/
-│   │   ├── PixController.php    # Endpoint de Geração Inteligente e Consulta Pix
-│   │   └── WebhookController.php # Listener de notificações, auditoria e CRUD de Webhooks
+│   │   ├── PixController.php              # Endpoint de Geração Inteligente e Consulta Pix
+│   │   └── WebhookController.php           # Listener de notificações, auditoria e CRUD de Webhooks
 │   ├── Services/
-│   │   ├── EnvLoader.php        # Parser nativo de arquivos .env
-│   │   ├── InterPixService.php   # Cliente OAuth v2 mTLS, Cobv e Webhooks Banco Inter
-│   │   ├── LojaIntegradaService.php # Cliente API Loja Integrada (Consulta e Atualização)
-│   │   └── PixCacheRepository.php # Repositório JSON com trava de arquivo (flock)
-│   └── Router.php               # Micro Rroteador HTTP e guardião de segurança CORS/403
+│   │   ├── EnvLoader.php                  # Parser nativo de arquivos .env
+│   │   ├── EvolutionService.php           # Notificações via WhatsApp (Evolution API v2.x)
+│   │   ├── InterPixService.php             # Cliente OAuth v2 mTLS, Cobv e Webhooks Banco Inter
+│   │   ├── LojaIntegradaService.php       # Cliente API Loja Integrada (Consulta e Atualização)
+│   │   └── PixCacheRepository.php         # Repositório JSON com trava de arquivo (flock)
+│   └── Router.php                         # Micro Rroteador HTTP e guardião de segurança CORS/403
 ├── public/
-│   ├── index.php                # Entrypoint principal & Painel de Controle Web
+│   ├── index.php                          # Entrypoint principal & Painel de Controle Web
 │   └── assets/
 ├── storage/
-│   ├── certs/                   # Certificados mTLS (inter_cert.crt e inter_cert.key)
-│   ├── data/                    # Cache local (pix_cache.json e inter_token.json)
-│   └── logs/                    # Arquivo de log de auditoria (webhooks.log)
-├── .env.example                 # Exemplo de variáveis de ambiente
-├── .gitignore                   # Regras de exclusão do Git
-├── cli.php                      # Utilitário CLI para testes no terminal
-├── qrpix-store.js               # Script de injeção JS na Loja Integrada
-└── README.md                    # Documentação do projeto
+│   ├── certs/                             # Certificados mTLS (inter_cert.crt e inter_cert.key)
+│   ├── data/                              # Cache local (pix_cache.json e inter_token.json)
+│   └── logs/                              # Arquivo de log de auditoria (webhooks.log)
+├── .env.example                           # Exemplo de variáveis de ambiente
+├── .gitignore                             # Regras de exclusão do Git (Proteção de privacidade)
+├── cli.php                                # Utilitário CLI para testes no terminal
+├── qrpix-store.js                         # Script de injeção JS na Loja Integrada
+└── README.md                              # Documentação do projeto
 ```
 
 ---
@@ -104,6 +109,14 @@ LOJA_INTEGRADA_CHAVE_API=sua_chave_api_20_caracteres
 LOJA_INTEGRADA_CHAVE_APLICACAO=sua_chave_aplicacao_uuid
 
 # ==========================================
+# Configurações do WhatsApp (Evolution API)
+# ==========================================
+EVOLUTION_ENABLED=true
+EVOLUTION_API_URL=http://seu-servidor-evolution:3005
+EVOLUTION_API_KEY=sua_global_api_key
+EVOLUTION_INSTANCE=nome_da_instancia
+
+# ==========================================
 # Configurações da Aplicação
 # ==========================================
 APP_ENV=development
@@ -113,13 +126,24 @@ APP_URL=http://localhost/inter-pix-php
 ### 3. Adicionar Certificados mTLS
 Coloque o certificado público (`inter_cert.crt`) e a chave privada (`inter_cert.key`) na pasta `storage/certs/`.
 
+### 4. Configurar Template de Mensagem do WhatsApp
+Copie o exemplo público de template para criar o arquivo de texto da sua loja:
+
+```bash
+cp config/whatsapp_pix_template.txt.example config/whatsapp_pix_template.txt
+```
+
+Edite `config/whatsapp_pix_template.txt` com as informações da sua empresa.
+
+> 🔒 **Nota de Privacidade**: O arquivo `config/*.txt` está configurado no `.gitignore` para garantir que o texto institucional da sua loja ou dados de clientes **nunca sejam enviados para repositórios públicos no Git**.
+
 ---
 
 ## 📡 Endpoints da API
 
 | Método | Endpoint | Descrição |
 | :--- | :--- | :--- |
-| `POST` / `GET` | `/api/pix/generate?numero={id}` | Gera ou recupera Pix inteligente de um pedido. |
+| `POST` / `GET` | `/api/pix/generate?numero={id}` | Gera ou recupera Pix inteligente e envia notificação no WhatsApp. |
 | `POST` | `/api/webhook/inter` | Webhook do Banco Inter (Recebe avisos de pagamento e estornos). |
 | `GET` | `/api/webhook/logs` | Retorna o log de auditoria dos Webhooks em JSON. |
 | `GET` | `/api/webhooks` | Consulta a URL do Webhook cadastrado no Banco Inter. |
@@ -159,13 +183,16 @@ php cli.php simulate-payment 28491
 
 # Simular estorno/devolução de um pedido (Webhook local)
 php cli.php simulate-refund 28491
+
+# Testar envio de Pix via WhatsApp (Evolution API)
+php cli.php test-wpp 28491 5521975394966
 ```
 
 ---
 
 ## 🔒 Segurança em Primeiro Lugar
 
-- O arquivo `.gitignore` foi configurado para **NUNCA** enviar suas chaves de API, credenciais do `.env`, tokens salvos ou certificados `.crt`/`.key` para repositórios públicos.
+- O arquivo `.gitignore` exclui automaticamente `.env`, certificados mTLS (`storage/certs/*.crt`, `*.key`), arquivos de cache (`storage/data/*.json`), logs de auditoria (`storage/logs/*.log`) e arquivos de texto de templates (`config/*.txt`).
 - Todos os endpoints de armazenamento interno (`storage/`, `config/`, `src/`) possuem arquivos `.htaccess` dedicados com `Require all denied` para prevenir qualquer acesso externo via HTTP.
 
 ---

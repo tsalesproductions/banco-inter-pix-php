@@ -25,6 +25,7 @@ use App\Router;
 use App\Services\InterPixService;
 use App\Services\LojaIntegradaService;
 use App\Services\PixCacheRepository;
+use App\Services\EvolutionService;
 use App\Controllers\PixController;
 use App\Controllers\WebhookController;
 
@@ -48,8 +49,16 @@ $liService = new LojaIntegradaService(
     $config['loja_integrada']['base_url']
 );
 
+$evolutionService = new EvolutionService(
+    $config['evolution']['api_url'] ?? '',
+    $config['evolution']['api_key'] ?? '',
+    $config['evolution']['instance'] ?? '',
+    (bool) ($config['evolution']['enabled'] ?? false),
+    $config['evolution']['template_file'] ?? ''
+);
+
 // Instancia Controllers
-$pixController = new PixController($interService, $liService, $pixRepository);
+$pixController = new PixController($interService, $liService, $pixRepository, $evolutionService);
 $webhookController = new WebhookController($interService, $liService, $pixRepository);
 
 // Configura Roteador

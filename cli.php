@@ -310,6 +310,48 @@ switch ($command) {
         echo "✅ Resultado da Simulação de Estorno:\n" . $res . "\n";
         break;
 
+    case 'test-wpp':
+        $pedido = $argv[2] ?? null;
+        $testPhone = $argv[3] ?? null;
+        if (!$pedido) {
+            echo "Uso: php cli.php test-wpp <numero_pedido> [telefone_opcional]\n";
+            exit(1);
+        }
+        echo "🔹 Testando envio de WhatsApp (Evolution API) para o pedido #{$pedido}...\n";
+        try {
+            $li = new LojaIntegradaService(
+                $config['loja_integrada']['chave_api'],
+                $config['loja_integrada']['chave_aplicacao'],
+                $config['loja_integrada']['base_url']
+            );
+            $repo = new PixCacheRepository($config['storage']['cache_file']);
+            $evo = new App\Services\EvolutionService(
+                $config['evolution']['api_url'] ?? '',
+                $config['evolution']['api_key'] ?? '',
+                $config['evolution']['instance'] ?? '',
+                true, // Força ativado no comando CLI de teste
+                $config['evolution']['template_file'] ?? ''
+            );
+
+            $orderData = $li->getOrderByNumber($pedido);
+            if ($testPhone) {
+                $orderData['cliente']['celular'] = $testPhone;
+                echo "ℹ️ Usando telefone informado no terminal: {$testPhone}\n";
+            }
+
+            $pixRecord = $repo->getActivePixForOrder($pedido);
+
+            $pixCopyPaste = $pixRecord['pix_copy_paste'] ?? '00020126580014br.gov.bcb.pix0136test-br-code';
+            $qrCodeUrl = $pixRecord['qr_code_url'] ?? 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' . urlencode($pixCopyPaste);
+
+            $res = $evo->sendPixNotification($orderData, $pixCopyPaste, $qrCodeUrl);
+            echo "✅ Resultado do envio de WhatsApp:\n";
+            print_r($res);
+        } catch (\Exception $e) {
+            echo "❌ Erro ao enviar WhatsApp: " . $e->getMessage() . "\n";
+        }
+        break;
+
     default:
         echo "Comandos disponíveis:\n";
         echo "  php cli.php test-env              # Testa leitura do arquivo .env\n";
@@ -321,6 +363,7 @@ switch ($command) {
         echo "  php cli.php delete-webhook         # Remover Webhook no Inter\n";
         echo "  php cli.php simulate-payment <numero> # Simular pagamento de um pedido\n";
         echo "  php cli.php simulate-refund <numero>  # Simular estorno/devolução de um pedido\n";
+        echo "  php cli.php test-wpp <numero>     # Testar envio de Pix via WhatsApp\n";
         break;
 }
 

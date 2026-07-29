@@ -8,6 +8,10 @@
 .env.*.local
 qrpix-store-old.js
 
+# 2. Templates de Mensagens com Dados Personalizados de Clientes
+config/*.txt
+!config/whatsapp_pix_template.txt.example
+
 # 2. Certificados Digitais mTLS e Chaves Privadas
 storage/certs/*.crt
 storage/certs/*.key
