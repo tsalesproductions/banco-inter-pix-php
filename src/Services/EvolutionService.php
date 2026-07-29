@@ -150,12 +150,20 @@ class EvolutionService
         }
 
         // Tenta extrair telefone do cliente dos dados do pedido da Loja Integrada
-        $phone = $orderData['cliente']['celular'] 
+        $phone = $orderData['cliente']['telefone_celular']
+            ?? $orderData['cliente']['telefone_principal']
+            ?? $orderData['cliente']['celular'] 
             ?? $orderData['cliente']['telefone']
+            ?? $orderData['endereco_entrega']['telefone_celular']
+            ?? $orderData['endereco_entrega']['telefone_principal']
             ?? $orderData['endereco_entrega']['celular']
             ?? $orderData['endereco_entrega']['telefone']
+            ?? $orderData['endereco_cobranca']['telefone_celular']
+            ?? $orderData['endereco_cobranca']['telefone_principal']
             ?? $orderData['endereco_cobranca']['celular']
             ?? $orderData['endereco_cobranca']['telefone']
+            ?? $orderData['telefone_celular']
+            ?? $orderData['telefone_principal']
             ?? $orderData['celular'] 
             ?? $orderData['telefone'] 
             ?? null;
@@ -235,6 +243,7 @@ class EvolutionService
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CUSTOMREQUEST  => strtoupper($method),
             CURLOPT_TIMEOUT        => 15,
+            CURLOPT_IPRESOLVE      => CURL_IPRESOLVE_V4,
             CURLOPT_HTTPHEADER     => [
                 'Content-Type: application/json',
                 'apikey: ' . $this->apiKey
