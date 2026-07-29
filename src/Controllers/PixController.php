@@ -69,6 +69,17 @@ class PixController
             // 2. Se não existir ou estiver expirado, busca os dados completos do pedido na Loja Integrada
             $orderData = $this->liService->getOrderByNumber($orderNumber);
 
+            // 2.1. Valida se a forma de pagamento do pedido é Pix na Loja Integrada
+            if (!$this->isPixPayment($orderData)) {
+                http_response_code(400);
+                echo json_encode([
+                    'success' => false,
+                    'is_pix'  => false,
+                    'message' => "O pedido #{$orderNumber} não foi realizado com a forma de pagamento Pix."
+                ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+                return;
+            }
+
             // 3. Gera um TXID único de 26 a 35 caracteres
             $txid = InterPixService::generateTxid($orderNumber);
 
@@ -149,5 +160,38 @@ class PixController
             'total'   => count($records),
             'data'    => $records
         ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    }
+
+    /**
+     * Valida se a forma de pagamento do pedido da Loja Integrada é Pix
+     */
+    private function isPixPayment(array $orderData): bool
+    {
+        $pagamentos = $orderData['pagamentos'] ?? [];
+        if (empty($pagamentos) || !is_array($pagamentos)) {
+            return false;
+        }
+
+        foreach ($pagamentos as $pagamento) {
+            if (!is_array($pagamento)) {
+                continue;
+            }
+
+            $codigo = strtolower($pagamento['forma_pagamento']['codigo'] ?? '');
+            $nome = strtolower($pagamento['forma_pagamento']['nome'] ?? '');
+            $tipo = strtolower($pagamento['pagamento_tipo'] ?? '');
+
+            // 1. Checa se o código ou nome contém "pix" (ex: proxy-pagali-v2-pix, pagali_pix, pix, etc)
+            if (str_contains($codigo, 'pix') || str_contains($nome, 'pix')) {
+                return true;
+            }
+
+            // 2. Checa por tipo de pagamento instantâneo ou presença de pix_code/pix_qrcode
+            if ($tipo === 'instantpayment' || !empty($pagamento['pix_code']) || !empty($pagamento['pix_qrcode'])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
