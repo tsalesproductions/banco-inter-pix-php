@@ -59,7 +59,7 @@ $evolutionService = new EvolutionService(
 
 // Instancia Controllers
 $pixController = new PixController($interService, $liService, $pixRepository, $evolutionService);
-$webhookController = new WebhookController($interService, $liService, $pixRepository);
+$webhookController = new WebhookController($interService, $liService, $pixRepository, $evolutionService);
 
 // Configura Roteador
 $router = new Router();
@@ -75,6 +75,10 @@ $router->get('/api/webhook/logs', [$webhookController, 'getLogs']);
 $router->get('/api/webhooks', [$webhookController, 'listWebhooks']);
 $router->post('/api/webhooks', [$webhookController, 'registerWebhook']);
 $router->delete('/api/webhooks', [$webhookController, 'deleteWebhook']);
+
+// Rotas de Webhook Loja Integrada
+$router->post('/api/webhook/loja-integrada', [$webhookController, 'handleLojaIntegradaOrderWebhook']);
+$router->get('/api/webhook/li-logs', [$webhookController, 'getLiLogs']);
 
 // Rota de Interface Web (Painel de Controle)
 $router->get('/', function () use ($config) {

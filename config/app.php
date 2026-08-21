@@ -60,10 +60,11 @@ return [
         'token_file' => __DIR__ . '/../storage/data/inter_token.json',
     ],
     'evolution' => [
-        'enabled'       => env('EVOLUTION_ENABLED', false),
-        'api_url'       => rtrim(env('EVOLUTION_API_URL', ''), '/'),
-        'api_key'       => env('EVOLUTION_API_KEY', ''),
-        'instance'      => env('EVOLUTION_INSTANCE', ''),
-        'template_file' => __DIR__ . '/whatsapp_pix_template.txt',
+        'enabled'              => env('EVOLUTION_ENABLED', false),
+        'api_url'              => rtrim(env('EVOLUTION_API_URL', ''), '/'),
+        'api_key'              => env('EVOLUTION_API_KEY', ''),
+        'instance'             => env('EVOLUTION_INSTANCE', ''),
+        'template_file'        => __DIR__ . '/whatsapp_pix_template.txt',
+        'pagali_template_file' => __DIR__ . '/whatsapp_pagali_template.txt',
     ]
 ];

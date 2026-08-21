@@ -140,7 +140,7 @@ class EvolutionService
     /**
      * Envia notificação de Pix via WhatsApp (Imagem do QR Code + Código Copia e Cola com Template)
      */
-    public function sendPixNotification(array $orderData, string $pixCopyPaste, string $qrCodeUrl): array
+    public function sendPixNotification(array $orderData, string $pixCopyPaste, string $qrCodeUrl, ?string $customTemplateFile = null): array
     {
         if (!$this->isEnabled()) {
             return [
@@ -192,16 +192,17 @@ class EvolutionService
             ];
         }
 
-        // Carrega o template de mensagem .txt
+        // Carrega o template de mensagem .txt desejado
+        $targetTemplateFile = $customTemplateFile ?: $this->templateFile;
         $template = '';
-        if (!empty($this->templateFile) && file_exists($this->templateFile)) {
-            $template = file_get_contents($this->templateFile);
-        } elseif (!empty($this->templateFile) && file_exists($this->templateFile . '.example')) {
-            $template = file_get_contents($this->templateFile . '.example');
+        if (!empty($targetTemplateFile) && file_exists($targetTemplateFile)) {
+            $template = file_get_contents($targetTemplateFile);
+        } elseif (!empty($targetTemplateFile) && file_exists($targetTemplateFile . '.example')) {
+            $template = file_get_contents($targetTemplateFile . '.example');
         }
 
         if (empty($template)) {
-            $template = "Olá {nome}! Obrigado por comprar na Zargo. 🛒\n\nPara sua comodidade, enviamos abaixo as informações de pagamento via Pix para o seu Pedido #{numero_pedido} (Valor: {valor_total}).\n\n📌 Você pode escanear a foto do QR Code a seguir ou copiar o código Pix Copia e Cola diretamente na legenda da imagem.\n\nZargo Ind. e Com. de Móveis Ltda - CNPJ: 38.402.195/0001-79\nwww.zargo.com.br";
+            $template = "Olá {nome}! Obrigado por comprar em nosso site. 🛒\n\nPara sua comodidade, enviamos abaixo as informações de pagamento via Pix para o seu Pedido #{numero_pedido} (Valor: {valor_total}).\n\n📌 Você pode escanear a foto do QR Code a seguir ou copiar o código Pix Copia e Cola diretamente na legenda da imagem.";
         }
 
         // Substitui os marcadores do template (removendo {pix_copy_paste} do texto de introdução)

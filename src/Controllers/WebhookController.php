@@ -5,38 +5,54 @@ namespace App\Controllers;
 use App\Services\InterPixService;
 use App\Services\LojaIntegradaService;
 use App\Services\PixCacheRepository;
+use App\Services\EvolutionService;
 
 class WebhookController
 {
     private InterPixService $interService;
     private LojaIntegradaService $liService;
     private PixCacheRepository $pixRepository;
+    private ?EvolutionService $evolutionService;
     private string $logFilePath;
+    private string $liLogFilePath;
 
     public function __construct(
         InterPixService $interService,
         LojaIntegradaService $liService,
-        PixCacheRepository $pixRepository
+        PixCacheRepository $pixRepository,
+        ?EvolutionService $evolutionService = null
     ) {
         $this->interService = $interService;
         $this->liService = $liService;
         $this->pixRepository = $pixRepository;
+        $this->evolutionService = $evolutionService;
 
         $logDir = __DIR__ . '/../../storage/logs';
         if (!is_dir($logDir)) {
             mkdir($logDir, 0755, true);
         }
         $this->logFilePath = $logDir . '/webhooks.log';
+        $this->liLogFilePath = $logDir . '/li_webhooks.log';
     }
 
     /**
-     * Escreve uma mensagem estruturada no log de Webhooks
+     * Escreve uma mensagem estruturada no log de Webhooks do Inter
      */
     private function logMessage(string $message): void
     {
         $timestamp = date('Y-m-d H:i:s');
         $entry = "[{$timestamp}] {$message}\n";
         file_put_contents($this->logFilePath, $entry, FILE_APPEND);
+    }
+
+    /**
+     * Escreve uma mensagem estruturada no log de Webhooks da Loja Integrada
+     */
+    private function logLiMessage(string $message): void
+    {
+        $timestamp = date('Y-m-d H:i:s');
+        $entry = "[{$timestamp}] {$message}\n";
+        file_put_contents($this->liLogFilePath, $entry, FILE_APPEND);
     }
 
     /**
@@ -336,5 +352,195 @@ class WebhookController
                 'message' => 'Erro ao remover webhook: ' . $e->getMessage()
             ], JSON_UNESCAPED_UNICODE);
         }
+    }
+
+    /**
+     * Listener do Webhook da Loja Integrada (POST /api/webhook/loja-integrada)
+     * Processa notificações de pedidos em 'aguardando_pagamento' via Pix (Pagali/LI nativo)
+     */
+    public function handleLojaIntegradaOrderWebhook(): void
+    {
+        @header('Content-Type: application/json; charset=utf-8');
+
+        $rawBody = file_get_contents('php://input');
+        if (empty($rawBody) && !empty($GLOBALS['SIMULATED_RAW_BODY'])) {
+            $rawBody = $GLOBALS['SIMULATED_RAW_BODY'];
+        }
+
+        $clientIp = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
+        $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? 'UNKNOWN';
+
+        $this->logLiMessage("================================================================================");
+        $this->logLiMessage("[LOJA INTEGRADA WEBHOOK] IP: {$clientIp} | UA: {$userAgent}");
+        $this->logLiMessage("RAW PAYLOAD: " . ($rawBody ?: '(BODY VAZIO)'));
+
+        $payload = json_decode($rawBody, true);
+
+        if (!is_array($payload)) {
+            $msg = "ERROR: Payload JSON inválido recebido no Webhook da Loja Integrada.";
+            $this->logLiMessage($msg);
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => $msg], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+
+        // Tenta identificar o número do pedido
+        $orderNumber = $payload['numero'] ?? null;
+        if (!$orderNumber && isset($payload['id'])) {
+            $orderNumber = (int) $payload['id'];
+        }
+        if (!$orderNumber && isset($payload['pedido'])) {
+            if (preg_match('/\/(\d+)$/', (string)$payload['pedido'], $m)) {
+                $orderNumber = (int)$m[1];
+            }
+        }
+
+        // Se o payload não trouxer pagamentos completos ou situação, busca o pedido completo via API da LI
+        $orderData = $payload;
+        if ($orderNumber && (empty($payload['pagamentos']) || empty($payload['situacao']))) {
+            try {
+                $this->logLiMessage("FETCHING ORDER #{$orderNumber} via Loja Integrada API...");
+                $orderData = $this->liService->getOrderByNumber((int)$orderNumber);
+            } catch (\Throwable $e) {
+                $this->logLiMessage("ERROR ao buscar pedido #{$orderNumber} na API da LI: " . $e->getMessage());
+            }
+        }
+
+        $orderNumber = $orderData['numero'] ?? $orderNumber ?? 'N/A';
+
+        // 1. Valida Situação do Pedido: Deve ser 'aguardando_pagamento'
+        $situacaoCodigo = strtolower($orderData['situacao']['codigo'] ?? '');
+        $situacaoNome = $orderData['situacao']['nome'] ?? 'Desconhecida';
+
+        $this->logLiMessage("ORDER #{$orderNumber} | Situação: '{$situacaoCodigo}' ({$situacaoNome})");
+
+        if ($situacaoCodigo !== 'aguardando_pagamento' && strtolower($situacaoNome) !== 'aguardando pagamento') {
+            $msg = "Ignorado: A situação do pedido #{$orderNumber} é '{$situacaoCodigo}', diferente de 'aguardando_pagamento'.";
+            $this->logLiMessage($msg);
+            http_response_code(200);
+            echo json_encode([
+                'success' => true,
+                'action'  => 'skipped',
+                'reason'  => 'status_not_waiting_payment',
+                'message' => $msg
+            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            return;
+        }
+
+        // 2. Valida Forma de Pagamento: Deve ser Pix e possuir pix_code / pix_qrcode
+        $pagamentos = $orderData['pagamentos'] ?? [];
+        $pixCode = '';
+        $pixQrCode = '';
+        $isPix = false;
+
+        foreach ($pagamentos as $pagamento) {
+            if (!is_array($pagamento)) {
+                continue;
+            }
+
+            $codigo = strtolower($pagamento['forma_pagamento']['codigo'] ?? '');
+            $nome = strtolower($pagamento['forma_pagamento']['nome'] ?? '');
+            $tipo = strtolower($pagamento['pagamento_tipo'] ?? '');
+
+            if (str_contains($codigo, 'pix') || str_contains($nome, 'pix') || $tipo === 'instantpayment' || !empty($pagamento['pix_code'])) {
+                $isPix = true;
+                $pixCode = $pagamento['pix_code'] ?? '';
+                $pixQrCode = $pagamento['pix_qrcode'] ?? '';
+                break;
+            }
+        }
+
+        if (!$isPix) {
+            $msg = "Ignorado: O pedido #{$orderNumber} não possui forma de pagamento Pix.";
+            $this->logLiMessage($msg);
+            http_response_code(200);
+            echo json_encode([
+                'success' => true,
+                'action'  => 'skipped',
+                'reason'  => 'not_pix_payment',
+                'message' => $msg
+            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            return;
+        }
+
+        if (empty($pixCode)) {
+            $msg = "Ignorado: Nenhum código Pix (pix_code) foi encontrado no pedido #{$orderNumber}.";
+            $this->logLiMessage($msg);
+            http_response_code(200);
+            echo json_encode([
+                'success' => true,
+                'action'  => 'skipped',
+                'reason'  => 'missing_pix_code',
+                'message' => $msg
+            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            return;
+        }
+
+        if (empty($pixQrCode)) {
+            $pixQrCode = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' . urlencode($pixCode);
+        }
+
+        // 3. Envia notificação por WhatsApp via Evolution API usando o template customizado do Pagali/LI
+        $wppResult = null;
+        if ($this->evolutionService && $this->evolutionService->isEnabled()) {
+            $pagaliTemplateFile = __DIR__ . '/../../config/whatsapp_pagali_template.txt';
+            try {
+                $this->logLiMessage("SENDING WHATSAPP via Evolution API for Order #{$orderNumber}...");
+                $wppResult = $this->evolutionService->sendPixNotification(
+                    $orderData,
+                    $pixCode,
+                    $pixQrCode,
+                    $pagaliTemplateFile
+                );
+                $this->logLiMessage("WHATSAPP RESULT: " . json_encode($wppResult, JSON_UNESCAPED_UNICODE));
+            } catch (\Throwable $e) {
+                $wppResult = [
+                    'success' => false,
+                    'message' => 'Erro ao enviar WhatsApp: ' . $e->getMessage()
+                ];
+                $this->logLiMessage("WHATSAPP ERROR: " . $e->getMessage());
+            }
+        } else {
+            $wppResult = [
+                'success' => false,
+                'message' => 'Evolution API WhatsApp desabilitada ou não configurada no .env'
+            ];
+            $this->logLiMessage("INFO: Evolution API desativada. Notificação no WhatsApp ignorada.");
+        }
+
+        $this->logLiMessage("SUCCESS: Webhook da Loja Integrada processado para o pedido #{$orderNumber}.");
+        $this->logLiMessage("================================================================================");
+
+        http_response_code(200);
+        echo json_encode([
+            'success'         => true,
+            'message'         => "Webhook da Loja Integrada processado com sucesso para o pedido #{$orderNumber}!",
+            'order_number'    => $orderNumber,
+            'situacao'        => $situacaoCodigo,
+            'pix_code'        => $pixCode,
+            'whatsapp_result' => $wppResult
+        ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    }
+
+    /**
+     * Endpoint para consultar os Logs de Webhooks da Loja Integrada (GET /api/webhook/li-logs)
+     */
+    public function getLiLogs(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        if (!file_exists($this->liLogFilePath)) {
+            echo json_encode(['success' => true, 'logs' => 'Nenhum log de Webhook da Loja Integrada registrado ainda.']);
+            return;
+        }
+
+        $content = file_get_contents($this->liLogFilePath);
+        $lines = array_filter(explode("\n", $content));
+        $recentLines = array_slice($lines, -150);
+
+        echo json_encode([
+            'success'     => true,
+            'total_lines' => count($lines),
+            'logs'        => implode("\n", $recentLines)
+        ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     }
 }

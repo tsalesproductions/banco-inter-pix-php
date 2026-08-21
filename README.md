@@ -144,8 +144,10 @@ Edite `config/whatsapp_pix_template.txt` com as informações da sua empresa.
 | Método | Endpoint | Descrição |
 | :--- | :--- | :--- |
 | `POST` / `GET` | `/api/pix/generate?numero={id}` | Gera ou recupera Pix inteligente e envia notificação no WhatsApp. |
+| `POST` | `/api/webhook/loja-integrada` | Webhook de Pedidos da Loja Integrada (Dispara WhatsApp nativo Pagali quando `aguardando_pagamento`). |
+| `GET` | `/api/webhook/li-logs` | Retorna os logs de auditoria do Webhook da Loja Integrada. |
 | `POST` | `/api/webhook/inter` | Webhook do Banco Inter (Recebe avisos de pagamento e estornos). |
-| `GET` | `/api/webhook/logs` | Retorna o log de auditoria dos Webhooks em JSON. |
+| `GET` | `/api/webhook/logs` | Retorna o log de auditoria dos Webhooks do Banco Inter em JSON. |
 | `GET` | `/api/webhooks` | Consulta a URL do Webhook cadastrado no Banco Inter. |
 | `POST` | `/api/webhooks` | Cadastra ou altera a URL do Webhook no Banco Inter. |
 | `DELETE` | `/api/webhooks` | Remove a URL do Webhook cadastrado no Banco Inter. |

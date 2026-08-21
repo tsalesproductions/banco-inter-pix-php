@@ -352,6 +352,58 @@ switch ($command) {
         }
         break;
 
+    case 'test-li-webhook':
+        $pedido = $argv[2] ?? null;
+        if (!$pedido) {
+            echo "Uso: php cli.php test-li-webhook <numero_pedido>\n";
+            exit(1);
+        }
+        echo "🔹 Simulando Webhook da Loja Integrada (Pagali/LI Nativo) para o pedido #{$pedido}...\n";
+        try {
+            $inter = new InterPixService(
+                $config['inter']['client_id'],
+                $config['inter']['client_secret'],
+                $config['inter']['pix_key'],
+                $config['inter']['base_url'],
+                $config['storage']['token_file'],
+                $config['inter']['cert_path'] ?? null,
+                $config['inter']['key_path'] ?? null,
+                $config['inter']['cert_passphrase'] ?? null
+            );
+            $li = new LojaIntegradaService(
+                $config['loja_integrada']['chave_api'],
+                $config['loja_integrada']['chave_aplicacao'],
+                $config['loja_integrada']['base_url']
+            );
+            $repo = new PixCacheRepository($config['storage']['cache_file']);
+            $evo = new App\Services\EvolutionService(
+                $config['evolution']['api_url'] ?? '',
+                $config['evolution']['api_key'] ?? '',
+                $config['evolution']['instance'] ?? '',
+                true, // Força ativado no comando CLI de teste
+                $config['evolution']['template_file'] ?? ''
+            );
+
+            $webhook = new \App\Controllers\WebhookController($inter, $li, $repo, $evo);
+
+            $orderData = $li->getOrderByNumber((int)$pedido);
+            // Simula a situação 'aguardando_pagamento'
+            $orderData['situacao'] = [
+                'codigo' => 'aguardando_pagamento',
+                'nome'   => 'Aguardando pagamento'
+            ];
+
+            $GLOBALS['SIMULATED_RAW_BODY'] = json_encode($orderData);
+
+            ob_start();
+            $webhook->handleLojaIntegradaOrderWebhook();
+            $res = ob_get_clean();
+            echo "✅ Resultado do Webhook Loja Integrada:\n" . $res . "\n";
+        } catch (\Exception $e) {
+            echo "❌ Erro ao simular Webhook da Loja Integrada: " . $e->getMessage() . "\n";
+        }
+        break;
+
     default:
         echo "Comandos disponíveis:\n";
         echo "  php cli.php test-env              # Testa leitura do arquivo .env\n";
@@ -364,6 +416,7 @@ switch ($command) {
         echo "  php cli.php simulate-payment <numero> # Simular pagamento de um pedido\n";
         echo "  php cli.php simulate-refund <numero>  # Simular estorno/devolução de um pedido\n";
         echo "  php cli.php test-wpp <numero>     # Testar envio de Pix via WhatsApp\n";
+        echo "  php cli.php test-li-webhook <numero> # Testar Webhook Loja Integrada + WhatsApp\n";
         break;
 }
 
