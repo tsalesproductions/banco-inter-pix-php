@@ -395,14 +395,19 @@ class WebhookController
             }
         }
 
-        // Se o payload não trouxer pagamentos completos ou situação, busca o pedido completo via API da LI
+        // Os webhooks de notificação da Loja Integrada omitem o 'pix_code' e 'pix_qrcode' no payload de evento.
+        // Portanto, sempre buscamos o pedido individual completo diretamente na REST API da Loja Integrada.
         $orderData = $payload;
-        if ($orderNumber && (empty($payload['pagamentos']) || empty($payload['situacao']))) {
+        if ($orderNumber) {
             try {
-                $this->logLiMessage("FETCHING ORDER #{$orderNumber} via Loja Integrada API...");
-                $orderData = $this->liService->getOrderByNumber((int)$orderNumber);
+                $this->logLiMessage("FETCHING COMPLETE ORDER #{$orderNumber} via Loja Integrada REST API...");
+                $fullOrderData = $this->liService->getOrderByNumber((int)$orderNumber);
+                if (is_array($fullOrderData) && !empty($fullOrderData)) {
+                    $orderData = array_merge($orderData, $fullOrderData);
+                    $this->logLiMessage("SUCCESS: Dados completos do pedido #{$orderNumber} carregados da API da LI.");
+                }
             } catch (\Throwable $e) {
-                $this->logLiMessage("ERROR ao buscar pedido #{$orderNumber} na API da LI: " . $e->getMessage());
+                $this->logLiMessage("WARNING: Falha ao buscar detalhes completos do pedido #{$orderNumber} na API da LI: " . $e->getMessage());
             }
         }
 
