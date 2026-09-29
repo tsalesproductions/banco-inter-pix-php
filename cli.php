@@ -16,6 +16,7 @@ $config = require __DIR__ . '/config/app.php';
 use App\Services\InterPixService;
 use App\Services\LojaIntegradaService;
 use App\Services\PixCacheRepository;
+use App\Services\WppQueueRepository;
 
 $command = $argv[1] ?? 'help';
 
@@ -392,6 +393,22 @@ switch ($command) {
                 'codigo' => 'aguardando_pagamento',
                 'nome'   => 'Aguardando pagamento'
             ];
+            $hasPix = false;
+            foreach ($orderData['pagamentos'] ?? [] as $pag) {
+                if (!empty($pag['pix_code'])) {
+                    $hasPix = true;
+                    break;
+                }
+            }
+            if (!$hasPix) {
+                $orderData['pagamentos'] = [
+                    [
+                        'forma_pagamento' => ['codigo' => 'pix', 'nome' => 'Pix (Pagali)'],
+                        'pix_code'        => '00020126580014br.gov.bcb.pix0136test-br-code-pagali',
+                        'pix_qrcode'      => 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=test'
+                    ]
+                ];
+            }
 
             $GLOBALS['SIMULATED_RAW_BODY'] = json_encode($orderData);
 
@@ -401,6 +418,113 @@ switch ($command) {
             echo "✅ Resultado do Webhook Loja Integrada:\n" . $res . "\n";
         } catch (\Exception $e) {
             echo "❌ Erro ao simular Webhook da Loja Integrada: " . $e->getMessage() . "\n";
+        }
+        break;
+
+    case 'process-wpp-queue':
+        echo "🔹 Processando fila de envio de WhatsApp (modo queue)...\n";
+        try {
+            $queueRepo = new WppQueueRepository($config['storage']['queue_file']);
+            $dueItems = $queueRepo->getDueItems();
+
+            if (empty($dueItems)) {
+                echo "ℹ️ Nenhum pedido pendente para envio na fila neste momento.\n";
+                break;
+            }
+
+            echo "📦 Encontrado(s) " . count($dueItems) . " pedido(s) pronto(s) para validação e envio.\n\n";
+
+            $li = new LojaIntegradaService(
+                $config['loja_integrada']['chave_api'],
+                $config['loja_integrada']['chave_aplicacao'],
+                $config['loja_integrada']['base_url']
+            );
+
+            $evo = new App\Services\EvolutionService(
+                $config['evolution']['api_url'] ?? '',
+                $config['evolution']['api_key'] ?? '',
+                $config['evolution']['instance'] ?? '',
+                $config['evolution']['enabled'] ?? false,
+                $config['evolution']['template_file'] ?? ''
+            );
+
+            $pagaliTemplateFile = __DIR__ . '/config/whatsapp_pagali_template.txt';
+
+            foreach ($dueItems as $item) {
+                $orderNumber = $item['order_number'];
+                $itemId = $item['id'];
+                echo "----------------------------------------------------\n";
+                echo "🔍 Verificando Pedido #{$orderNumber} (Item ID: {$itemId})...\n";
+
+                try {
+                    $currentOrder = $li->getOrderByNumber($orderNumber);
+                    $situacaoCodigo = strtolower($currentOrder['situacao']['codigo'] ?? '');
+                    $situacaoNome = strtolower($currentOrder['situacao']['nome'] ?? '');
+                    $isAprovado = $currentOrder['situacao']['aprovado'] ?? false;
+
+                    echo "   Situação atual na LI: '{$situacaoCodigo}' ({$situacaoNome})\n";
+
+                    if ($situacaoCodigo === 'aguardando_pagamento' || $situacaoNome === 'aguardando pagamento') {
+                        echo "   ⚠️ Pedido continua SEM PAGAMENTO! Enviando WhatsApp...\n";
+                        if ($evo->isEnabled()) {
+                            $wppResult = $evo->sendPixNotification(
+                                $currentOrder,
+                                $item['pix_code'],
+                                $item['pix_qrcode'],
+                                $pagaliTemplateFile
+                            );
+                            $queueRepo->updateStatus($itemId, 'sent', ['wpp_result' => $wppResult]);
+                            echo "   ✅ WhatsApp enviado com sucesso!\n";
+                        } else {
+                            $queueRepo->updateStatus($itemId, 'failed', ['reason' => 'Evolution API disabled in .env']);
+                            echo "   ❌ Erro: Evolution API está desativada no .env\n";
+                        }
+                    } elseif ($situacaoCodigo === 'pedido_pago' || $isAprovado || in_array($situacaoCodigo, ['faturado', 'pedido_em_separacao', 'pedido_enviado', 'pedido_entregue'])) {
+                        $queueRepo->updateStatus($itemId, 'skipped_paid', ['reason' => "Order paid ({$situacaoCodigo})"]);
+                        echo "   🟢 Pedido JÁ FOI PAGO! Envio de WhatsApp cancelado.\n";
+                    } elseif ($situacaoCodigo === 'pedido_cancelado') {
+                        $queueRepo->updateStatus($itemId, 'skipped_cancelled', ['reason' => 'Order cancelled']);
+                        echo "   ℹ️ Pedido foi CANCELADO. Envio de WhatsApp ignorado.\n";
+                    } else {
+                        $queueRepo->updateStatus($itemId, 'skipped_other', ['reason' => "Status is '{$situacaoCodigo}'"]);
+                        echo "   ℹ️ Pedido com status '{$situacaoCodigo}'. Envio de WhatsApp ignorado.\n";
+                    }
+                } catch (\Throwable $e) {
+                    echo "   ❌ Erro ao processar pedido #{$orderNumber}: " . $e->getMessage() . "\n";
+                    $queueRepo->updateStatus($itemId, 'failed', ['reason' => $e->getMessage()]);
+                }
+            }
+        } catch (\Throwable $e) {
+            echo "❌ Erro ao processar fila: " . $e->getMessage() . "\n";
+        }
+        break;
+
+    case 'list-wpp-queue':
+        echo "🔹 Consultando fila de envio de WhatsApp...\n";
+        try {
+            $queueRepo = new WppQueueRepository($config['storage']['queue_file']);
+            $items = $queueRepo->getAll();
+
+            if (empty($items)) {
+                echo "ℹ️ A fila está vazia.\n";
+                break;
+            }
+
+            echo sprintf("%-25s %-12s %-18s %-20s %-20s\n", "ID", "PEDIDO", "STATUS", "AGENDADO PARA", "CRIADO EM");
+            echo str_repeat("-", 98) . "\n";
+
+            foreach ($items as $item) {
+                echo sprintf(
+                    "%-25s %-12s %-18s %-20s %-20s\n",
+                    substr($item['id'] ?? '', 0, 24),
+                    $item['order_number'] ?? 'N/A',
+                    strtoupper($item['status'] ?? 'UNKNOWN'),
+                    $item['scheduled_at'] ?? 'N/A',
+                    $item['created_at'] ?? 'N/A'
+                );
+            }
+        } catch (\Throwable $e) {
+            echo "❌ Erro ao consultar fila: " . $e->getMessage() . "\n";
         }
         break;
 
@@ -417,6 +541,8 @@ switch ($command) {
         echo "  php cli.php simulate-refund <numero>  # Simular estorno/devolução de um pedido\n";
         echo "  php cli.php test-wpp <numero>     # Testar envio de Pix via WhatsApp\n";
         echo "  php cli.php test-li-webhook <numero> # Testar Webhook Loja Integrada + WhatsApp\n";
+        echo "  php cli.php process-wpp-queue     # Processar fila de WhatsApp agendada\n";
+        echo "  php cli.php list-wpp-queue        # Listar itens na fila de WhatsApp\n";
         break;
 }
 

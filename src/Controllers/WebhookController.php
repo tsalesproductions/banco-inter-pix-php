@@ -6,6 +6,7 @@ use App\Services\InterPixService;
 use App\Services\LojaIntegradaService;
 use App\Services\PixCacheRepository;
 use App\Services\EvolutionService;
+use App\Services\WppQueueRepository;
 
 class WebhookController
 {
@@ -13,6 +14,7 @@ class WebhookController
     private LojaIntegradaService $liService;
     private PixCacheRepository $pixRepository;
     private ?EvolutionService $evolutionService;
+    private ?WppQueueRepository $queueRepository;
     private string $logFilePath;
     private string $liLogFilePath;
 
@@ -20,12 +22,14 @@ class WebhookController
         InterPixService $interService,
         LojaIntegradaService $liService,
         PixCacheRepository $pixRepository,
-        ?EvolutionService $evolutionService = null
+        ?EvolutionService $evolutionService = null,
+        ?WppQueueRepository $queueRepository = null
     ) {
         $this->interService = $interService;
         $this->liService = $liService;
         $this->pixRepository = $pixRepository;
         $this->evolutionService = $evolutionService;
+        $this->queueRepository = $queueRepository;
 
         $logDir = __DIR__ . '/../../storage/logs';
         if (!is_dir($logDir)) {
@@ -403,7 +407,11 @@ class WebhookController
                 $this->logLiMessage("FETCHING COMPLETE ORDER #{$orderNumber} via Loja Integrada REST API...");
                 $fullOrderData = $this->liService->getOrderByNumber((int)$orderNumber);
                 if (is_array($fullOrderData) && !empty($fullOrderData)) {
+                    $originalSituacao = $payload['situacao'] ?? null;
                     $orderData = array_merge($orderData, $fullOrderData);
+                    if ($originalSituacao !== null) {
+                        $orderData['situacao'] = $originalSituacao;
+                    }
                     $this->logLiMessage("SUCCESS: Dados completos do pedido #{$orderNumber} carregados da API da LI.");
                 }
             } catch (\Throwable $e) {
@@ -485,7 +493,42 @@ class WebhookController
             $pixQrCode = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' . urlencode($pixCode);
         }
 
-        // 3. Envia notificação por WhatsApp via Evolution API usando o template customizado do Pagali/LI
+        // Verifica modo de envio do Webhook (.env: LI_WEBHOOK_MODE=direct|queue)
+        $config = require __DIR__ . '/../../config/app.php';
+        $mode = strtolower((string)($config['loja_integrada']['webhook_mode'] ?? 'direct'));
+        $delayMinutes = (int)($config['loja_integrada']['queue_delay_minutes'] ?? 10);
+
+        if ($mode === 'queue') {
+            if (!$this->queueRepository) {
+                $queueFile = $config['storage']['queue_file'] ?? (__DIR__ . '/../../storage/data/wpp_queue.json');
+                $this->queueRepository = new WppQueueRepository($queueFile);
+            }
+
+            $queuedItem = $this->queueRepository->enqueue(
+                $orderNumber,
+                $pixCode,
+                $pixQrCode,
+                $orderData,
+                $delayMinutes
+            );
+
+            $this->logLiMessage("MODE QUEUE: Pedido #{$orderNumber} adicionado à fila para verificação após {$delayMinutes} min. Agendado para {$queuedItem['scheduled_at']}.");
+            $this->logLiMessage("================================================================================");
+
+            http_response_code(200);
+            echo json_encode([
+                'success'         => true,
+                'action'          => 'enqueued',
+                'mode'            => 'queue',
+                'order_number'    => $orderNumber,
+                'scheduled_at'    => $queuedItem['scheduled_at'],
+                'delay_minutes'   => $delayMinutes,
+                'message'         => "Pedido #{$orderNumber} adicionado à fila. Envio de WhatsApp agendado para {$queuedItem['scheduled_at']} caso o pagamento não seja confirmado."
+            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            return;
+        }
+
+        // 3. Modo 'direct': Envia notificação por WhatsApp via Evolution API usando o template customizado do Pagali/LI
         $wppResult = null;
         if ($this->evolutionService && $this->evolutionService->isEnabled()) {
             $pagaliTemplateFile = __DIR__ . '/../../config/whatsapp_pagali_template.txt';

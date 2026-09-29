@@ -50,13 +50,16 @@ return [
             : 'https://cdpj.partners.bancointer.com.br',
     ],
     'loja_integrada' => [
-        'chave_api'       => env('LOJA_INTEGRADA_CHAVE_API', ''),
-        'chave_aplicacao' => env('LOJA_INTEGRADA_CHAVE_APLICACAO', ''),
-        'base_url'        => 'https://api.awsli.com.br/v1',
+        'chave_api'                 => env('LOJA_INTEGRADA_CHAVE_API', ''),
+        'chave_aplicacao'           => env('LOJA_INTEGRADA_CHAVE_APLICACAO', ''),
+        'base_url'                  => 'https://api.awsli.com.br/v1',
+        'webhook_mode'              => env('LI_WEBHOOK_MODE', 'direct'), // 'direct' | 'queue'
+        'queue_delay_minutes'       => (int) env('LI_WEBHOOK_QUEUE_DELAY_MINUTES', 10),
     ],
     'storage' => [
-        'data_path' => __DIR__ . '/../storage/data',
+        'data_path'  => __DIR__ . '/../storage/data',
         'cache_file' => __DIR__ . '/../storage/data/pix_cache.json',
+        'queue_file' => __DIR__ . '/../storage/data/wpp_queue.json',
         'token_file' => __DIR__ . '/../storage/data/inter_token.json',
     ],
     'evolution' => [

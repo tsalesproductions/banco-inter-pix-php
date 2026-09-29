@@ -108,6 +108,12 @@ INTER_CERT_PASSPHRASE=
 LOJA_INTEGRADA_CHAVE_API=sua_chave_api_20_caracteres
 LOJA_INTEGRADA_CHAVE_APLICACAO=sua_chave_aplicacao_uuid
 
+# Modo do Webhook para envio de WhatsApp de Pix não pago:
+# 'direct' = Envia mensagem no WhatsApp imediatamente ao receber o webhook
+# 'queue'  = Coloca em fila e valida após X minutos se o pedido continua sem pagamento antes de enviar
+LI_WEBHOOK_MODE=queue
+LI_WEBHOOK_QUEUE_DELAY_MINUTES=10
+
 # ==========================================
 # Configurações do WhatsApp (Evolution API)
 # ==========================================
@@ -188,6 +194,33 @@ php cli.php simulate-refund 28491
 
 # Testar envio de Pix via WhatsApp (Evolution API)
 php cli.php test-wpp 28491 5521975394966
+
+# Processar fila de WhatsApp agendada (Modo Queue)
+php cli.php process-wpp-queue
+
+# Listar pedidos na fila de WhatsApp
+php cli.php list-wpp-queue
+```
+
+---
+
+## ⏱️ Sistema de Fila (Modo `queue`) & Agendamento CRON
+
+Quando a variável `LI_WEBHOOK_MODE` está configurada como `queue` no `.env`:
+
+1. Ao receber o Webhook da Loja Integrada para um pedido em `aguardando_pagamento` via Pix, a aplicação **adiciona o pedido na fila** (`storage/data/wpp_queue.json`) com um agendamento de **10 minutos no futuro** (ajustável via `LI_WEBHOOK_QUEUE_DELAY_MINUTES`).
+2. O envio imediato de mensagem no WhatsApp é pausado.
+3. Quando o comando `php cli.php process-wpp-queue` é executado, ele consulta a API da Loja Integrada para verificar a situação atualizada do pedido:
+   - **Se o pedido continuar sem pagamento (`aguardando_pagamento`)**: Dispara a mensagem com o QR Code e código Pix no WhatsApp do cliente.
+   - **Se o cliente já tiver pago (`pedido_pago`)**: Cancela o envio no WhatsApp e marca como ignorado.
+   - **Se o pedido foi cancelado (`pedido_cancelado`)**: Ignora o envio.
+
+### Configurando o CRON no Servidor / cPanel / VPS
+
+Para processar a fila automaticamente a cada minuto, adicione a seguinte regra na **CRON** do servidor:
+
+```bash
+* * * * * cd /caminho/para/inter-pix-php && php cli.php process-wpp-queue >> /dev/null 2>&1
 ```
 
 ---
