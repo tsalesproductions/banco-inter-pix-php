@@ -2,6 +2,9 @@
 
 use App\Services\EnvLoader;
 
+// Garante fuso horário do Brasil
+date_default_timezone_set('America/Sao_Paulo');
+
 // Garante que o .env seja carregado
 $envPath = __DIR__ . '/../.env';
 EnvLoader::load($envPath);

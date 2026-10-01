@@ -427,12 +427,22 @@ switch ($command) {
             $queueRepo = new WppQueueRepository($config['storage']['queue_file']);
             $dueItems = $queueRepo->getDueItems();
 
+            $logLi = function (string $msg) {
+                $logDir = __DIR__ . '/storage/logs';
+                if (!is_dir($logDir)) {
+                    mkdir($logDir, 0755, true);
+                }
+                $timestamp = date('Y-m-d H:i:s');
+                file_put_contents($logDir . '/li_webhooks.log', "[{$timestamp}] {$msg}\n", FILE_APPEND);
+            };
+
             if (empty($dueItems)) {
                 echo "ℹ️ Nenhum pedido pendente para envio na fila neste momento.\n";
                 break;
             }
 
             echo "📦 Encontrado(s) " . count($dueItems) . " pedido(s) pronto(s) para validação e envio.\n\n";
+            $logLi("CRON WORKER: Encontrado(s) " . count($dueItems) . " pedido(s) pronto(s) para validação na fila.");
 
             $li = new LojaIntegradaService(
                 $config['loja_integrada']['chave_api'],
@@ -463,9 +473,11 @@ switch ($command) {
                     $isAprovado = $currentOrder['situacao']['aprovado'] ?? false;
 
                     echo "   Situação atual na LI: '{$situacaoCodigo}' ({$situacaoNome})\n";
+                    $logLi("CRON WORKER PEDIDO #{$orderNumber}: Situação atual na Loja Integrada = '{$situacaoCodigo}' ({$situacaoNome})");
 
                     if ($situacaoCodigo === 'aguardando_pagamento' || $situacaoNome === 'aguardando pagamento') {
                         echo "   ⚠️ Pedido continua SEM PAGAMENTO! Enviando WhatsApp...\n";
+                        $logLi("CRON WORKER PEDIDO #{$orderNumber}: Continua SEM PAGAMENTO. Enviando WhatsApp via Evolution API...");
                         if ($evo->isEnabled()) {
                             $wppResult = $evo->sendPixNotification(
                                 $currentOrder,
@@ -475,22 +487,28 @@ switch ($command) {
                             );
                             $queueRepo->updateStatus($itemId, 'sent', ['wpp_result' => $wppResult]);
                             echo "   ✅ WhatsApp enviado com sucesso!\n";
+                            $logLi("CRON WORKER PEDIDO #{$orderNumber}: WhatsApp ENVIADO com sucesso. Resposta: " . json_encode($wppResult, JSON_UNESCAPED_UNICODE));
                         } else {
                             $queueRepo->updateStatus($itemId, 'failed', ['reason' => 'Evolution API disabled in .env']);
                             echo "   ❌ Erro: Evolution API está desativada no .env\n";
+                            $logLi("CRON WORKER PEDIDO #{$orderNumber} ERROR: Evolution API desativada no .env");
                         }
                     } elseif ($situacaoCodigo === 'pedido_pago' || $isAprovado || in_array($situacaoCodigo, ['faturado', 'pedido_em_separacao', 'pedido_enviado', 'pedido_entregue'])) {
                         $queueRepo->updateStatus($itemId, 'skipped_paid', ['reason' => "Order paid ({$situacaoCodigo})"]);
                         echo "   🟢 Pedido JÁ FOI PAGO! Envio de WhatsApp cancelado.\n";
+                        $logLi("CRON WORKER PEDIDO #{$orderNumber} SKIPPED: O cliente JÁ PAGOU o pedido (Situação: '{$situacaoCodigo}'). Lembrete de Pix CANCELADO.");
                     } elseif ($situacaoCodigo === 'pedido_cancelado') {
                         $queueRepo->updateStatus($itemId, 'skipped_cancelled', ['reason' => 'Order cancelled']);
                         echo "   ℹ️ Pedido foi CANCELADO. Envio de WhatsApp ignorado.\n";
+                        $logLi("CRON WORKER PEDIDO #{$orderNumber} SKIPPED: O pedido foi CANCELADO na Loja Integrada. Envio de WhatsApp ignorado.");
                     } else {
                         $queueRepo->updateStatus($itemId, 'skipped_other', ['reason' => "Status is '{$situacaoCodigo}'"]);
                         echo "   ℹ️ Pedido com status '{$situacaoCodigo}'. Envio de WhatsApp ignorado.\n";
+                        $logLi("CRON WORKER PEDIDO #{$orderNumber} SKIPPED: Situação '{$situacaoCodigo}'. Envio de WhatsApp ignorado.");
                     }
                 } catch (\Throwable $e) {
                     echo "   ❌ Erro ao processar pedido #{$orderNumber}: " . $e->getMessage() . "\n";
+                    $logLi("CRON WORKER PEDIDO #{$orderNumber} ERROR: " . $e->getMessage());
                     $queueRepo->updateStatus($itemId, 'failed', ['reason' => $e->getMessage()]);
                 }
             }
